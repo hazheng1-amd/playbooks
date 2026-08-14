@@ -1,6 +1,17 @@
 {
   "description": "中文本地化 playbook 所需的软件依赖和设置步骤",
   "dependencies": {
+    "comfyui": {
+      "name": "ComfyUI",
+      "description": "Node-based Stable Diffusion interface",
+      "category": "app",
+      "platforms": ["windows", "linux"],
+      "file": "comfyui.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
+      }
+    },
     "pytorch": {
       "name": "PyTorch",
       "description": "深度学习框架",
@@ -17,6 +28,17 @@
         "windows": [
           "halo_box"
         ]
+      }
+    },
+    "comfyui-models": {
+      "name": "ComfyUI Models",
+      "description": "ComfyUI models for image generation",
+      "category": "model",
+      "platforms": ["windows", "linux"],
+      "file": "comfyui_models.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
       }
     },
     "driver": {
