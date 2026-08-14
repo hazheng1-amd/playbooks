@@ -19,6 +19,17 @@
         ]
       }
     },
+    "driver": {
+      "name": "AMD GPU Driver",
+      "description": "适配最优性能的最新版AMD显卡驱动",
+      "category": "driver",
+      "platforms": ["windows", "linux"],
+      "file": "driver.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
+      }
+    },
     "memory-config": {
       "name": "内存配置",
       "description": "配置用于运行大型模型的 GPU 内存分配",
