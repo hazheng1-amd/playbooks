@@ -1,6 +1,17 @@
 {
   "description": "中文本地化 playbook 所需的软件依赖和设置步骤",
   "dependencies": {
+    "comfyui": {
+      "name": "ComfyUI",
+      "description": "基于节点的 Stable Diffusion 界面",
+      "category": "app",
+      "platforms": ["windows", "linux"],
+      "file": "comfyui.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
+      }
+    },
     "pytorch": {
       "name": "PyTorch",
       "description": "深度学习框架",
@@ -17,6 +28,28 @@
         "windows": [
           "halo_box"
         ]
+      }
+    },
+    "comfyui-models": {
+      "name": "ComfyUI Models",
+      "description": "用于图像生成的 ComfyUI 模型",
+      "category": "model",
+      "platforms": ["windows", "linux"],
+      "file": "comfyui_models.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
+      }
+    },
+    "driver": {
+      "name": "AMD GPU Driver",
+      "description": "适配最优性能的最新版AMD显卡驱动",
+      "category": "driver",
+      "platforms": ["windows", "linux"],
+      "file": "driver.md",
+      "preinstalled": {
+        "linux": ["halo_box"],
+        "windows": ["halo_box"]
       }
     },
     "memory-config": {
