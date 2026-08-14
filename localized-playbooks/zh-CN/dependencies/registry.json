@@ -3,7 +3,7 @@
   "dependencies": {
     "comfyui": {
       "name": "ComfyUI",
-      "description": "Node-based Stable Diffusion interface",
+      "description": "基于节点的 Stable Diffusion 界面",
       "category": "app",
       "platforms": ["windows", "linux"],
       "file": "comfyui.md",
@@ -32,7 +32,7 @@
     },
     "comfyui-models": {
       "name": "ComfyUI Models",
-      "description": "ComfyUI models for image generation",
+      "description": "用于图像生成的 ComfyUI 模型",
       "category": "model",
       "platforms": ["windows", "linux"],
       "file": "comfyui_models.md",
