@@ -1,0 +1,131 @@
+{
+  "id": "pytorch-rocm-llms",
+  "title": "Running LLMs on PyTorch with AMD ROCm™ Software",
+  "description": "Learn to run powerful language models on your PC with PyTorch and AMD ROCm™ software to summarize documents quickly and easily.",
+  "time": 30,
+  "supported_platforms": {
+    "halo_box": [
+      "linux",
+      "windows"
+    ],
+    "halo": [
+      "linux",
+      "windows"
+    ],
+    "stx": [
+      "linux",
+      "windows"
+    ],
+    "krk": [
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
+    ]
+  },
+  "tested_platforms": {
+    "halo": [
+      "linux",
+      "windows"
+    ],
+    "stx": [
+      "linux",
+      "windows"
+    ],
+    "krk": [
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
+    ]
+  },
+  "required_platforms": {
+    "halo": [
+      "linux",
+      "windows"
+    ],
+    "stx": [
+      "linux",
+      "windows"
+    ],
+    "krk": [
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
+    ]
+  },
+  "published_platforms": {
+    "halo_box": [
+      "linux",
+      "windows"
+    ],
+    "halo": [
+      "linux",
+      "windows"
+    ],
+    "stx": [
+      "linux",
+      "windows"
+    ],
+    "krk": [
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
+    ]
+  },
+  "difficulty": "beginner",
+  "isNew": false,
+  "isFeatured": false,
+  "developed": true,
+  "published": true,
+  "tags": [
+    "pytorch",
+    "rocm",
+    "llm",
+    "inference",
+    "summarization"
+  ],
+  "coverImage": "assets/cover.png"
+}
