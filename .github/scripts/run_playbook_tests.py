@@ -35,7 +35,7 @@ Device inference:
     Tests outside any @device: block run on all devices. When --device is
     passed on the CLI, tests whose inferred device list doesn't include that
     device are skipped.
-    Valid devices: halo, stx, krk, rx7900xt, rx9070xt.
+    Valid devices: halo, grgh, mdsh, stx, krk, grgp, mdsp, rx7900xt, rx9070xt, r9700.
 
 Supported test attributes:
     - id: Unique identifier for the test (required)
@@ -150,18 +150,33 @@ Usage:
 """
 
 import argparse
+import contextlib
+import dataclasses
+import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+# TestBlock fields that do not affect execution, so they stay out of signatures
+SIGNATURE_EXCLUDED = frozenset({"line_number", "hidden"})
 
-VALID_DEVICES = {"halo", "stx", "krk", "rx7900xt", "rx9070xt", "r9700"}
+
+# Box/reference SKUs (halo_box, grgh_box, mdsh_box) are intentionally absent:
+# like halo_box they are metadata/display-only and never get a runner group.
+VALID_DEVICES = {
+    "halo", "grgh", "mdsh",          # halo-class APUs
+    "stx", "krk", "grgp", "mdsp",    # point-class APUs
+    "rx7900xt", "rx9070xt", "r9700",  # discrete GPUs
+}
 
 
 @dataclass
@@ -204,9 +219,10 @@ class PlaybookTestSuite:
     results: list[TestResult] = field(default_factory=list)
 
 
-def find_playbook_path(playbook_id: str) -> Optional[Path]:
+def find_playbook_path(playbook_id: str, repo_root: Optional[Path] = None) -> Optional[Path]:
     """Find the playbook directory by ID."""
-    repo_root = Path(__file__).parent.parent.parent
+    # repo_root is injectable so the selector can read a base checkout too
+    repo_root = repo_root or Path(__file__).parent.parent.parent
 
     # Check core and supplemental directories
     for category in ["core", "supplemental"]:
@@ -215,6 +231,155 @@ def find_playbook_path(playbook_id: str) -> Optional[Path]:
             return playbook_path
 
     return None
+
+
+def load_merged_metadata(locale: str, category: str, playbook_id: str, repo_root: Optional[Path] = None) -> dict:
+    """Load localized metadata, optionally inheriting canonical English fields."""
+    repo_root = repo_root or Path(__file__).parent.parent.parent
+    localized_file = (
+        repo_root / "localized-playbooks" / locale / category / playbook_id / "playbook.json"
+    )
+    english_file = repo_root / "playbooks" / category / playbook_id / "playbook.json"
+
+    localized_metadata = {}
+    if localized_file.is_file():
+        localized_metadata = json.loads(localized_file.read_text(encoding="utf-8"))
+
+    localized_only = localized_metadata.get("localized_only", True)
+    if not isinstance(localized_only, bool):
+        raise ValueError(f"'localized_only' in {localized_file} must be a boolean")
+
+    metadata = {}
+    if not localized_only and english_file.is_file():
+        metadata.update(json.loads(english_file.read_text(encoding="utf-8")))
+    metadata.update(localized_metadata)
+    metadata["localized_only"] = localized_only
+
+    if metadata.get("id") != playbook_id:
+        raise ValueError(
+            f"Metadata ID mismatch for '{playbook_id}': found {metadata.get('id')!r}"
+        )
+    if localized_only or not english_file.is_file():
+        missing = sorted(
+            {"id", "title", "description", "supported_platforms"} - metadata.keys()
+        )
+        if missing:
+            kind = "Strict localized" if localized_only else "Localized-only"
+            raise ValueError(
+                f"{kind} playbook '{playbook_id}' is missing: {', '.join(missing)}"
+            )
+    return metadata
+
+
+def materialize_localized_playbook(
+    locale: str,
+    playbook_id: str,
+    destination: Path,
+    localized_only: bool = True,
+    repo_root: Optional[Path] = None,
+) -> Path:
+    """Build the effective localized playbook tree in ``destination``."""
+    repo_root = repo_root or Path(__file__).parent.parent.parent
+    matches = [
+        repo_root / "localized-playbooks" / locale / category / playbook_id
+        for category in ("core", "supplemental")
+        if (repo_root / "localized-playbooks" / locale / category / playbook_id).is_dir()
+    ]
+    if not matches:
+        raise ValueError(
+            "Localized playbook directory does not exist: "
+            f"localized-playbooks/{locale}/{{core,supplemental}}/{playbook_id}"
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f"Localized playbook ID '{playbook_id}' exists in both core and supplemental"
+        )
+
+    localized_source = matches[0]
+    layers = [localized_source]
+    if not localized_only:
+        layers.insert(0, repo_root / "playbooks" / localized_source.parent.name / playbook_id)
+    for layer in layers:
+        if layer.is_dir():
+            shutil.copytree(layer, destination, dirs_exist_ok=True)
+    if not (destination / "README.md").is_file():
+        raise ValueError(
+            f"No effective README.md found for localized playbook "
+            f"'{locale}/{localized_source.parent.name}/{playbook_id}'"
+        )
+    return destination
+
+
+def load_dependency_registry(locale: str, localized_only: bool = True, repo_root: Optional[Path] = None) -> dict:
+    """Load localized dependency metadata using the selected fallback policy."""
+    repo_root = repo_root or Path(__file__).parent.parent.parent
+    english = repo_root / "playbooks" / "dependencies" / "registry.json"
+    localized = repo_root / "localized-playbooks" / locale / "dependencies" / "registry.json"
+    registry_paths = (localized,) if localized_only else (english, localized)
+    merged = {}
+    for registry_path in registry_paths:
+        if not registry_path.is_file():
+            continue
+        try:
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(
+                f"Unable to read dependency registry {registry_path}: {error}"
+            ) from error
+        dependencies = registry.get("dependencies", {})
+        if not isinstance(dependencies, dict):
+            raise ValueError(f"'dependencies' in {registry_path} must be an object")
+        merged.update(dependencies)
+    return merged
+
+
+def resolve_localized_require_tags(
+    locale: str,
+    content: str,
+    localized_only: bool = True,
+    repo_root: Optional[Path] = None,
+) -> str:
+    """Expand @require tags using localized dependency overlays."""
+    repo_root = repo_root or Path(__file__).parent.parent.parent
+    deps_map = load_dependency_registry(locale, localized_only, repo_root)
+    localized_root = repo_root / "localized-playbooks" / locale / "dependencies"
+    english_root = repo_root / "playbooks" / "dependencies"
+
+    def replace(match: re.Match) -> str:
+        parts = []
+        for dep_id in (d.strip() for d in match.group(1).split(",") if d.strip()):
+            dep_info = deps_map.get(dep_id)
+            if not isinstance(dep_info, dict) or not dep_info.get("file"):
+                if localized_only:
+                    raise ValueError(
+                        f"@require dependency '{dep_id}' is missing valid localized metadata"
+                    )
+                print(f"Warning: @require dependency '{dep_id}' not found in registry")
+                continue
+            relative_file = dep_info["file"]
+            localized_candidate = localized_root / relative_file
+            if localized_only and not localized_candidate.resolve().is_relative_to(
+                localized_root.resolve()
+            ):
+                raise ValueError(
+                    f"Localized dependency path escapes its directory: {relative_file!r}"
+                )
+            candidates = [localized_candidate]
+            if not localized_only:
+                candidates.append(english_root / relative_file)
+            dep_file = next((candidate for candidate in candidates if candidate.is_file()), None)
+            if dep_file is None:
+                if localized_only:
+                    raise ValueError(
+                        f"Localized dependency file for '{dep_id}' was not found"
+                    )
+                print(f"Warning: dependency file for '{dep_id}' was not found")
+                continue
+            print(f"Resolved dependency '{dep_id}' from {dep_file}")
+            parts.append(dep_file.read_text(encoding="utf-8"))
+        return "\n".join(parts) if parts else match.group(0)
+
+    return re.sub(r"<!-- @require:([a-z0-9-,]+) -->", replace, content)
 
 
 def parse_test_attributes(attr_string: str) -> dict:
@@ -472,7 +637,7 @@ def substitute_vars(
     return placeholder_pattern.sub(_replace, code)
 
 
-def resolve_require_tags(content: str) -> str:
+def resolve_require_tags(content: str, repo_root: Optional[Path] = None) -> str:
     """Resolve @require tags by inlining dependency content.
 
     Finds ``<!-- @require:dep-id -->`` tags in the README content and replaces
@@ -480,7 +645,7 @@ def resolve_require_tags(content: str) -> str:
     ``playbooks/dependencies/`` folder.  This allows the test extractor to
     discover @test blocks that live inside shared dependency files.
     """
-    repo_root = Path(__file__).parent.parent.parent
+    repo_root = repo_root or Path(__file__).parent.parent.parent
     dependencies_root = repo_root / "playbooks" / "dependencies"
     registry_path = dependencies_root / "registry.json"
 
@@ -591,12 +756,19 @@ def _infer_device(content: str, position: int) -> str:
     return "all"
 
 
-def extract_tests(readme_path: Path, target_platform: str, target_device: Optional[str] = None) -> list[TestBlock]:
+def extract_tests(readme_path: Path, target_platform: str, target_device: Optional[str] = None,
+                  repo_root: Optional[Path] = None, locale: str = "",
+                  localized_only: bool = True) -> list[TestBlock]:
     """Extract test blocks from a README.md file."""
     content = readme_path.read_text(encoding="utf-8")
 
     # Resolve @require tags so tests inside dependencies are discovered
-    content = resolve_require_tags(content)
+    if locale:
+        content = resolve_localized_require_tags(
+            locale, content, localized_only, repo_root=repo_root
+        )
+    else:
+        content = resolve_require_tags(content, repo_root)
 
     tests = []
 
@@ -650,7 +822,7 @@ def extract_tests(readme_path: Path, target_platform: str, target_device: Option
             workdir=attrs.get("workdir"),
             continue_on_error=attrs.get("continue_on_error", False),
             hidden=attrs.get("hidden", False),
-            setup=resolve_setup(attrs.get("setup"), setup_defs, target_platform),
+            setup=None,  # resolved after platform/device filtering (see below)
             language=language,
             code=code,
             line_number=line_number,
@@ -677,6 +849,11 @@ def extract_tests(readme_path: Path, target_platform: str, target_device: Option
         # are preserved. Unresolved declared references raise loudly.
         if var_defs:
             test.code = substitute_vars(test.code, var_defs, target_device, test.id)
+
+        # Resolve setup only for surviving tests, so we don't warn about setups
+        # for tests that are filtered out on this platform (e.g. a Linux-only
+        # setup referenced by a Linux test while building the Windows view).
+        test.setup = resolve_setup(attrs.get("setup"), setup_defs, target_platform)
 
         tests.append(test)
 
@@ -938,7 +1115,14 @@ def write_failure_metadata(
     failure_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = None) -> bool:
+def _run_playbook_tests_at_path(
+    playbook_id: str,
+    platform: str,
+    device: Optional[str],
+    playbook_path: Path,
+    locale: str = "",
+    localized_only: bool = True,
+) -> bool:
     """Run all tests for a playbook."""
     print(f"\n{'#'*60}")
     print(f"# Testing Playbook: {playbook_id}")
@@ -946,12 +1130,6 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
     if device:
         print(f"# Device: {device}")
     print(f"{'#'*60}\n")
-
-    # Find playbook
-    playbook_path = find_playbook_path(playbook_id)
-    if not playbook_path:
-        print(f"Error: Playbook '{playbook_id}' not found")
-        return False
 
     readme_path = playbook_path / "README.md"
     print(f"Playbook path: {playbook_path}")
@@ -962,7 +1140,9 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # Extract tests
-    tests = extract_tests(readme_path, platform, device)
+    tests = extract_tests(
+        readme_path, platform, device, locale=locale, localized_only=localized_only
+    )
 
     if not tests:
         print(f"\nNo tests found for platform '{platform}' in {playbook_id}")
@@ -971,6 +1151,8 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
             f"No tests found for platform '{platform}' in playbook '{playbook_id}'",
             encoding="utf-8",
         )
+        if locale:
+            (results_dir / "locale.txt").write_text(f"{locale}\n", encoding="utf-8")
         return True
 
     print(f"\nFound {len(tests)} test(s) to run (in README order):")
@@ -1026,6 +1208,7 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
     # Write summary
     summary = {
         "playbook_id": playbook_id,
+        "locale": locale,
         "platform": platform,
         "total_tests": len(tests),
         "passed": sum(1 for r in suite.results if r.success),
@@ -1046,6 +1229,9 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
 
     summary_file = results_dir / "summary.json"
     summary_file.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    if locale:
+        (results_dir / "locale.txt").write_text(f"{locale}\n", encoding="utf-8")
 
     # Print summary
     print(f"\n{'='*60}")
@@ -1073,6 +1259,241 @@ def run_playbook_tests(playbook_id: str, platform: str, device: Optional[str] = 
     return all_passed
 
 
+def run_playbook_tests(
+    playbook_id: str,
+    platform: str,
+    device: Optional[str] = None,
+    locale: str = "",
+    localized_only: bool = True,
+) -> bool:
+    """Run canonical or localized tests for one playbook."""
+    if not locale:
+        playbook_path = find_playbook_path(playbook_id)
+        if not playbook_path:
+            print(f"Error: Playbook '{playbook_id}' not found")
+            return False
+        return _run_playbook_tests_at_path(
+            playbook_id, platform, device, playbook_path
+        )
+
+    temp_parent = Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir())
+    try:
+        temp_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="localized-playbook-", dir=temp_parent
+        ) as temp_dir:
+            playbook_path = materialize_localized_playbook(
+                locale, playbook_id, Path(temp_dir), localized_only
+            )
+            return _run_playbook_tests_at_path(
+                playbook_id,
+                platform,
+                device,
+                playbook_path,
+                locale=locale,
+                localized_only=localized_only,
+            )
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return False
+
+
+# --- Test selection support -------------------------------------------------
+# The matrix builder (build_test_matrix.py) imports these to compute, for one
+# checkout, what each (playbook, platform, device) entry would execute. It runs
+# them against both the head tree and a materialised base tree using THIS
+# extractor, so only content differs between the two sides. A separate harness
+# path check forces the full matrix whenever the extractor itself changed, which
+# is what makes applying one extractor to both trees safe.
+
+def list_playbook_ids(repo_root: Path) -> list[str]:
+    ids = set()
+    for category in ("core", "supplemental"):
+        base = repo_root / "playbooks" / category
+        if base.is_dir():
+            ids.update(p.name for p in base.iterdir() if (p / "playbook.json").exists())
+    return sorted(ids)
+
+
+def build_matrix_entries(repo_root: Path) -> list[dict]:
+    """Expand every playbook.json into CI matrix entries."""
+    entries = []
+    for playbook_id in list_playbook_ids(repo_root):
+        for category in ("core", "supplemental"):
+            meta_file = repo_root / "playbooks" / category / playbook_id / "playbook.json"
+            if not meta_file.exists():
+                continue
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"Warning: cannot read {meta_file}: {exc}", file=sys.stderr)
+                break
+            required = meta.get("required_platforms", {})
+            for device, platforms in meta.get("tested_platforms", {}).items():
+                for platform in platforms:
+                    os_label = "Windows" if platform == "windows" else "Linux"
+                    entries.append({
+                        "playbook": playbook_id,
+                        "platform": platform,
+                        "arch": device,
+                        "runner": json.dumps(["self-hosted", os_label, device]),
+                        "runner_labels": f"self-hosted,{os_label},{device}",
+                        "required": platform in set(required.get(device, [])),
+                    })
+            break
+    return entries
+
+
+def list_localized_playbook_ids(repo_root: Path, locale: str) -> list[str]:
+    ids = set()
+    for category in ("core", "supplemental"):
+        base = repo_root / "localized-playbooks" / locale / category
+        if base.is_dir():
+            ids.update(p.name for p in base.iterdir() if (p / "playbook.json").exists())
+    return sorted(ids)
+
+
+def build_localized_matrix_entries(repo_root: Path, locale: str) -> list[dict]:
+    """Expand localized metadata into the self-hosted CI matrix format."""
+    slug = re.sub(r"[^a-z0-9]+", "-", locale.lower()).strip("-")
+    if not slug:
+        raise ValueError(f"Unable to generate a runner label from locale {locale!r}")
+    locale_label = f"localized-{slug}"
+    if not (repo_root / "localized-playbooks" / locale).is_dir():
+        raise ValueError(
+            f"Localized content directory does not exist: localized-playbooks/{locale}"
+        )
+
+    entries = []
+    for playbook_id in list_localized_playbook_ids(repo_root, locale):
+        for category in ("core", "supplemental"):
+            localized_dir = repo_root / "localized-playbooks" / locale / category / playbook_id
+            if not localized_dir.is_dir():
+                continue
+            metadata = load_merged_metadata(locale, category, playbook_id, repo_root)
+            localized_only = metadata["localized_only"]
+            if localized_only and not (localized_dir / "README.md").is_file():
+                raise ValueError(
+                    f"Localized README.md not found for strict localized playbook "
+                    f"'{locale}/{category}/{playbook_id}'"
+                )
+            if not localized_only and not (
+                (localized_dir / "README.md").is_file()
+                or (repo_root / "playbooks" / category / playbook_id / "README.md").is_file()
+            ):
+                raise ValueError(
+                    f"No effective README.md found for localized playbook "
+                    f"'{locale}/{category}/{playbook_id}'"
+                )
+            tested = metadata.get("tested_platforms", {})
+            required = metadata.get("required_platforms", {})
+            if not tested:
+                print(
+                    f"Skipping '{playbook_id}': no tested_platforms metadata",
+                    file=sys.stderr,
+                )
+                break
+            if not isinstance(tested, dict):
+                raise ValueError(
+                    f"'tested_platforms' for '{playbook_id}' must be an object"
+                )
+            if not isinstance(required, dict):
+                raise ValueError(
+                    f"'required_platforms' for '{playbook_id}' must be an object"
+                )
+            for device, platforms in tested.items():
+                if not isinstance(device, str) or not device:
+                    raise ValueError(
+                        f"Invalid device name for '{playbook_id}': {device!r}"
+                    )
+                if not isinstance(platforms, list):
+                    raise ValueError(
+                        f"tested_platforms.{device} for '{playbook_id}' must be an array"
+                    )
+                required_for_device = required.get(device, [])
+                if not isinstance(required_for_device, list):
+                    raise ValueError(
+                        f"required_platforms.{device} for '{playbook_id}' must be an array"
+                    )
+                for platform in platforms:
+                    if platform not in {"windows", "linux"}:
+                        raise ValueError(
+                            f"Unsupported platform '{platform}' for '{playbook_id}'"
+                        )
+                    os_label = "Windows" if platform == "windows" else "Linux"
+                    entries.append({
+                        "locale": locale,
+                        "playbook": playbook_id,
+                        "platform": platform,
+                        "arch": device,
+                        "runner": json.dumps(
+                            ["self-hosted", os_label, device, locale_label]
+                        ),
+                        "runner_label": locale_label,
+                        "runner_labels": f"self-hosted,{os_label},{device},{locale_label}",
+                        "required": platform in set(required_for_device),
+                        "localized_only": localized_only,
+                    })
+            break
+    return entries
+
+
+def assets_digest(assets_dir: Path) -> Optional[str]:
+    """Digest an assets tree. None means "cannot be signed", which forces a run.
+
+    A symlink escaping the tree is unsignable: its target content is not covered
+    here, so a change to that target would otherwise be invisible.
+    """
+    if not assets_dir.is_dir():
+        return ""
+    root = assets_dir.resolve()
+    digest = hashlib.sha256()
+    for path in sorted(assets_dir.rglob("*")):
+        rel = str(path.relative_to(assets_dir)).replace(os.sep, "/")
+        if path.is_symlink():
+            try:
+                target = path.resolve()
+            except OSError:
+                return None
+            if not target.is_relative_to(root):
+                return None
+            digest.update(rel.encode("utf-8") + b"\x02" + os.readlink(path).encode("utf-8"))
+        elif path.is_file():
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\x01" if os.access(path, os.X_OK) else b"\x00")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def entry_signature(repo_root: Path, playbook_id: str, platform: str,
+                    device: str) -> Optional[str]:
+    """Signature of what a checkout would execute for one entry, or None.
+
+    None means the signature could not be computed (missing playbook, extraction
+    error); the caller must then treat the entry as not-provably-equal and run it.
+    """
+    playbook_path = find_playbook_path(playbook_id, repo_root=repo_root)
+    if playbook_path is None:
+        return None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            tests = extract_tests(playbook_path / "README.md", platform, device,
+                                  repo_root=repo_root)
+    except Exception:
+        return None
+    # @require inlines shared dependency markdown, so its assets are in scope too
+    own = assets_digest(playbook_path / "assets")
+    shared = assets_digest(repo_root / "playbooks" / "dependencies" / "assets")
+    if own is None or shared is None:
+        return None
+    payload = [
+        {k: v for k, v in dataclasses.asdict(t).items() if k not in SIGNATURE_EXCLUDED}
+        for t in tests
+    ]
+    blob = json.dumps([payload, own, shared], sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run playbook tests")
     parser.add_argument("--playbook", required=True, help="Playbook ID to test")
@@ -1088,9 +1509,32 @@ def main():
         default=None,
         help="Target device (filters @device: blocks)",
     )
+    parser.add_argument(
+        "--locale",
+        nargs="?",
+        const="",
+        default="",
+        help=(
+            "Localized content locale; an omitted value selects English "
+            "(supports PowerShell, which drops explicit empty arguments)"
+        ),
+    )
+    parser.add_argument(
+        "--localized-only",
+        type=str.lower,
+        choices=["true", "false"],
+        default="true",
+        help="Disable canonical fallback for localized content",
+    )
     args = parser.parse_args()
 
-    success = run_playbook_tests(args.playbook, args.platform, args.device)
+    success = run_playbook_tests(
+        args.playbook,
+        args.platform,
+        args.device,
+        locale=args.locale,
+        localized_only=args.localized_only == "true",
+    )
     sys.exit(0 if success else 1)
 
 
