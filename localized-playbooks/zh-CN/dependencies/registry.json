@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../playbooks/dependencies/registry.schema.json",
+  "$schema": "./registry.schema.json",
   "description": "中文本地化 playbook 所需的软件依赖和设置步骤",
   "dependencies": {
     "pytorch": {
@@ -18,7 +18,8 @@
         "windows": [
           "halo_box"
         ]
-      }
+      },
+      "versionable": true
     },
     "memory-config": {
       "name": "内存配置",
@@ -32,7 +33,8 @@
       "preinstalled": {
         "linux": [],
         "windows": []
-      }
+      },
+      "versionable": false
     },
     "software-update": {
       "name": "软件更新",
@@ -46,7 +48,8 @@
       "preinstalled": {
         "linux": [],
         "windows": []
-      }
+      },
+      "versionable": false
     },
     "driver": {
       "name": "AMD GPU Driver",
@@ -64,7 +67,8 @@
         "windows": [
           "halo_box"
         ]
-      }
+      },
+      "versionable": true
     },
     "lmstudio": {
       "name": "LM Studio",
@@ -78,7 +82,8 @@
       "preinstalled": {
         "linux": [],
         "windows": []
-      }
+      },
+      "versionable": true
     },
     "lmstudio-models-qwen3-35b-a3b": {
       "name": "Qwen3.5-35B-A3B Model",
@@ -92,7 +97,8 @@
       "preinstalled": {
         "linux": [],
         "windows": []
-      }
+      },
+      "versionable": false
     },
     "lmstudio-models-qwen3-9b": {
       "name": "Qwen3.5 9B Model",
@@ -106,7 +112,8 @@
       "preinstalled": {
         "linux": [],
         "windows": []
-      }
+      },
+      "versionable": false
     },
     "lemonade": {
       "name": "Lemonade",
@@ -124,7 +131,8 @@
         "windows": [
           "halo_box"
         ]
-      }
+      },
+      "versionable": true
     },
     "nodejs": {
       "name": "Node.js",
@@ -143,7 +151,8 @@
         "windows": [
           "halo_box"
         ]
-      }
+      },
+      "versionable": true
     },
     "podman": {
       "name": "Podman",
@@ -158,7 +167,8 @@
           "halo_box"
         ],
         "windows": []
-      }
+      },
+      "versionable": true
     }
   }
 }
