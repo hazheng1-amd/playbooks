@@ -51,7 +51,7 @@
  * <!-- @device:end -->
  * ```
  * 
- * Valid device IDs: halo, stx, krk, rx7900xt, rx9070xt, r9700.
+ * Valid device IDs: halo, grgh, mdsh, stx, krk, grgp, mdsp, rx7900xt, rx9070xt, r9700.
  * Content outside of `@device` tags is shown on all devices.
  * 
  * ## Pre-installed Software Dropdowns
@@ -76,18 +76,24 @@
 
 export type Platform = "windows" | "linux";
 export type Architecture = "halo" | "krk";
-export type Device = "halo" | "halo_box" | "stx" | "krk" | "rx7900xt" | "rx9070xt" | "r9700";
+export type Device = "halo" | "halo_box" | "grgh" | "grgh_box" | "mdsh" | "mdsh_box" | "stx" | "krk" | "grgp" | "mdsp" | "rx7900xt" | "rx9070xt" | "r9700";
 export type Category = "core" | "supplemental" | "backup";
 export type Difficulty = "beginner" | "intermediate" | "advanced";
 export type DeviceCategory = "reference" | "apu" | "gpu";
 
-export const DEVICE_IDS: Device[] = ["halo", "halo_box", "stx", "krk", "rx7900xt", "rx9070xt", "r9700"];
+export const DEVICE_IDS: Device[] = ["halo", "halo_box", "grgh", "grgh_box", "mdsh", "mdsh_box", "stx", "krk", "grgp", "mdsp", "rx7900xt", "rx9070xt", "r9700"];
 
 export const deviceNames: Record<Device, string> = {
   halo: "Ryzen™ AI Max",
   halo_box: "AMD Ryzen™ AI Halo",
+  grgh: "Gorgon Halo",
+  grgh_box: "Gorgon Halo Box",
+  mdsh: "Medusa Halo",
+  mdsh_box: "Medusa Halo Box",
   stx: "Ryzen™ AI 300 HX",
   krk: "Ryzen™ AI 300",
+  grgp: "Gorgon Point",
+  mdsp: "Medusa Point",
   rx7900xt: "Radeon™ RX 7900 XT",
   rx9070xt: "Radeon™ RX 9070 XT",
   r9700: "Radeon™ AI Pro R9700",
@@ -102,8 +108,8 @@ export interface DeviceCategoryInfo {
 }
 
 export const DEVICE_CATEGORIES: DeviceCategoryInfo[] = [
-  { id: "reference", name: "Reference Platforms", devices: ["halo_box"], deviceDisplayNames: { halo_box: "AMD Ryzen\u2122 AI Halo" } },
-  { id: "apu", name: "Ryzen\u2122 AI APUs", devices: ["halo", "stx", "krk"] },
+  { id: "reference", name: "Reference Platforms", devices: ["halo_box", "grgh_box", "mdsh_box"], deviceDisplayNames: { halo_box: "AMD Ryzen\u2122 AI Halo" } },
+  { id: "apu", name: "Ryzen\u2122 AI APUs", devices: ["halo", "grgh", "mdsh", "stx", "krk", "grgp", "mdsp"] },
   { id: "gpu", name: "Radeon\u2122 GPUs", devices: ["rx7900xt", "rx9070xt", "r9700"] },
 ];
 
@@ -144,8 +150,11 @@ export function extractCategoryDevices(
  * Prefers "reference" for halo, otherwise matches to apu/gpu.
  */
 export function categoryForDevice(device: Device): DeviceCategory {
-  if (device === "halo_box") return "reference";
-  if (device === "halo" || device === "stx" || device === "krk") return "apu";
+  if (device === "halo_box" || device === "grgh_box" || device === "mdsh_box") return "reference";
+  if (
+    device === "halo" || device === "grgh" || device === "mdsh" ||
+    device === "stx" || device === "krk" || device === "grgp" || device === "mdsp"
+  ) return "apu";
   return "gpu";
 }
 
@@ -194,6 +203,66 @@ export interface PlaybookMeta {
   
   /** Cover image path relative to the playbook folder (e.g., "assets/cover.png") */
   coverImage?: string;
+
+  /**
+   * The main / default model this playbook runs, for at-a-glance user clarity.
+   * Either a single string (same model on every device) OR an object keyed by
+   * Device, for playbooks that run a different model per device (e.g. a larger
+   * model on Halo/HaloBox and a smaller one on Strix/Krackan and dGPUs). The
+   * frontend shows the entry matching the selected device (falling back to any
+   * single value). Omitted for playbooks with no model (e.g. AMD Sync, CVML,
+   * the kernel tutorial).
+   * Examples:
+   *   "primaryModel": "Qwen3.6-35B-A3B"
+   *   "primaryModel": { "halo_box": "GPT-OSS-120B", "halo": "GPT-OSS-120B",
+   *                      "stx": "GPT-OSS-20B", "krk": "GPT-OSS-20B" }
+   */
+  primaryModel?: string | Partial<Record<Device, string>>;
+
+  /**
+   * Recommended system memory (in GB) to run this playbook's primary model,
+   * as a coarse tier (8/16/24/32/64/128). Either a single number (same on every
+   * device) OR an object keyed by Device, for playbooks that run a different
+   * model per device (so the memory need differs — e.g. 128 GB where a large
+   * model runs on Halo, less on Strix/Krackan/dGPUs running a smaller model).
+   * The frontend shows the entry matching the selected device (falling back to
+   * any single value). Omitted for playbooks with no model (dev tools). Users
+   * with less memory should pick a smaller model where the playbook supports it.
+   * Examples:
+   *   "recommendedSystemMemory": 16
+   *   "recommendedSystemMemory": { "halo_box": 128, "halo": 128,
+   *                                 "stx": 32, "krk": 32 }
+   */
+  recommendedSystemMemory?: number | Partial<Record<Device, number>>;
+
+  /**
+   * Per-playbook software-version overrides, keyed by device CATEGORY
+   * (reference / apu / gpu) then OS. Use for the playbook's hero app that isn't
+   * captured by an @require tag (e.g. ds4, llama.cpp, the model) or to pin a
+   * version different from the central value. Required, versionable deps
+   * (@require tags) get their versions from playbooks/dependency-versions.json;
+   * these overrides win on same-named keys. Example:
+   *   "validatedVersions": {
+   *     "reference": { "windows": { "ComfyUI": "0.5.4", "PyTorch": "2.10" } }
+   *   }
+   */
+  validatedVersions?: Partial<Record<DeviceCategory, Partial<Record<Platform, Record<string, string>>>>>;
+
+  /** Month/year this playbook was validated, e.g. "2026-07". Falls back to dependency-versions.json defaultDate. */
+  validatedDate?: string;
+
+  /**
+   * Resolved per-device, per-OS validation shown at the bottom of the playbook.
+   * Populated server-side (baseline + validatedVersions merged); not authored by hand.
+   */
+  validation?: Partial<Record<Device, Partial<Record<Platform, ValidationInfo>>>>;
+}
+
+export interface ValidationInfo {
+  /** Month/year the playbook was last validated, e.g. "2026-07" (rendered as "July 2026") */
+  lastValidated?: string;
+  /** Key/value pairs of software validated for this device+OS, e.g. { "ROCm": "7.13.0" } */
+  versions?: Record<string, string>;
 }
 
 export interface TestResultInfo {
@@ -258,6 +327,24 @@ export interface Playbook extends PlaybookMeta {
 
   /** Test coverage data — only present when running in coverage mode */
   testCoverage?: TestCoverageInfo;
+}
+
+/**
+ * Formats a "YYYY-MM" or "YYYY-MM-DD" validation date into a human-readable
+ * string like "July 2026". Falls back to the raw string if it can't be parsed.
+ */
+export function formatValidationDate(value?: string): string {
+  if (!value) return "";
+  const match = /^(\d{4})-(\d{2})/.exec(value.trim());
+  if (!match) return value;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const months = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  if (monthIndex < 0 || monthIndex > 11) return value;
+  return `${months[monthIndex]} ${year}`;
 }
 
 /**

@@ -27,9 +27,11 @@ By the end of this playbook you will be able to:
 
 ---
 
+<!-- @device:halo_box,halo,stx,krk -->
 ## Setting the Memory Configuration
 
 <!-- @require:memory-config -->
+<!-- @device:end -->
 
 <!-- @device:halo_box -->
 ## Check for Software Updates
@@ -75,6 +77,7 @@ lemonade pull Qwen3.6-35B-A3B-GGUF
 
 Then load it with a large context window and save that setting for future runs:
 
+<!-- @require:lemonade-ready -->
 <!-- @test:id=lemonade-model-load timeout=900 -->
 ```bash
 lemonade unload
@@ -617,6 +620,11 @@ trap cleanup EXIT
 export DOCKER_CONFIG="$docker_config"
 printf '{ "auths": {} }\n' > "$DOCKER_CONFIG/config.json"
 
+# Docker Desktop injects its WSL cli-tools a few seconds after the distro boots.
+for i in $(seq 1 30); do
+  docker version >/dev/null 2>&1 && break
+  sleep 2
+done
 docker version
 
 docker build -t openclaw-sandbox:bookworm-slim - <<'DOCKERFILE'
