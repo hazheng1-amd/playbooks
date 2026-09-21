@@ -37,14 +37,38 @@
   },
   "tested_platforms": {
     "halo": [
-      "windows",
-      "linux"
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
     ]
   },
   "required_platforms": {
     "halo": [
-      "windows",
-      "linux"
+      "linux",
+      "windows"
+    ],
+    "rx7900xt": [
+      "linux",
+      "windows"
+    ],
+    "rx9070xt": [
+      "linux",
+      "windows"
+    ],
+    "r9700": [
+      "linux",
+      "windows"
     ]
   },
   "published_platforms": {
